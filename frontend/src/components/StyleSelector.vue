@@ -339,7 +339,8 @@ const handleTrain = async (profile: StyleProfile) => {
   }
 
   currentTrainingProfile.value = profile
-  await loadModels()
+  trainForm.modelName = ''
+  await loadNanochatModels()
   trainDialogVisible.value = true
 }
 
