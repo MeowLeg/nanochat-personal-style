@@ -1,0 +1,256 @@
+
+import os
+import json
+import asyncio
+from datetime import datetime
+from typing import List, Dict, Any, Optional
+from dataclasses import dataclass
+from enum import Enum
+
+from nanochat_integration.training.data import StyleDataProcessor
+
+
+class TrainingStatus(Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+@dataclass
+class TrainingJob:
+    job_id: str
+    style_id: str
+    style_name: str
+    sample_ids: list
+    model_name: str
+    status: TrainingStatus
+    progress: float = 0.0
+    adapter_path: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: str = ""
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+class MLXModelConfig:
+    def __init__(self, model_path: str, model_name: str, model_type: str = "nanochat-zh"):
+        self.model_path = model_path
+        self.model_name = model_name
+        self.model_type = model_type
+
+
+class MLXModelManager:
+    def __init__(self, base_dir: str = "./data/mlx_models"):
+        self.base_dir = base_dir
+        os.makedirs(base_dir, exist_ok=True)
+        self.available_models = self._discover_models()
+    
+    def _discover_models(self) -> Dict[str, Dict[str, Any]]:
+        models = {
+            "nanochat-zh": {
+                "name": "nanochat-zh",
+                "path": "./data/mlx_models/nanochat-zh",
+                "type": "nanochat-zh"
+            }
+        }
+        return models
+    
+    def get_model_config(self, model_name: str) -> Optional[MLXModelConfig]:
+        if model_name not in self.available_models:
+            return None
+        
+        model_info = self.available_models[model_name]
+        return MLXModelConfig(
+            model_path=model_info["path"],
+            model_name=model_name,
+            model_type=model_info["type"]
+        )
+    
+    def list_models(self) -> List[Dict[str, Any]]:
+        return list(self.available_models.values())
+
+
+class MLXStyleTrainingManager:
+    def __init__(self, base_dir: str = "./data/lora_adapters"):
+        self.base_dir = base_dir
+        self.jobs_dir = os.path.join(base_dir, "jobs")
+        self.adapters_dir = os.path.join(base_dir, "adapters")
+        os.makedirs(self.jobs_dir, exist_ok=True)
+        os.makedirs(self.adapters_dir, exist_ok=True)
+
+        self.model_manager = MLXModelManager()
+        self.jobs: Dict[str, TrainingJob] = {}
+        self._load_jobs()
+
+    def _load_jobs(self):
+        for filename in os.listdir(self.jobs_dir):
+            if filename.endswith(".json"):
+                with open(os.path.join(self.jobs_dir, filename), 'r') as f:
+                    data = json.load(f)
+                    job = TrainingJob(
+                        job_id=data['job_id'],
+                        style_id=data['style_id'],
+                        style_name=data['style_name'],
+                        sample_ids=data['sample_ids'],
+                        model_name=data.get('model_name', 'nanochat-zh'),
+                        status=TrainingStatus(data['status']),
+                        progress=data.get('progress', 0.0),
+                        adapter_path=data.get('adapter_path'),
+                        error_message=data.get('error_message'),
+                        created_at=data['created_at'],
+                        started_at=data.get('started_at'),
+                        completed_at=data.get('completed_at')
+                    )
+                    self.jobs[job.job_id] = job
+
+    def _save_job(self, job: TrainingJob):
+        job_file = os.path.join(self.jobs_dir, f"{job.job_id}.json")
+        with open(job_file, 'w') as f:
+            json.dump({
+                'job_id': job.job_id,
+                'style_id': job.style_id,
+                'style_name': job.style_name,
+                'sample_ids': job.sample_ids,
+                'model_name': job.model_name,
+                'status': job.status.value,
+                'progress': job.progress,
+                'adapter_path': job.adapter_path,
+                'error_message': job.error_message,
+                'created_at': job.created_at,
+                'started_at': job.started_at,
+                'completed_at': job.completed_at
+            }, f)
+
+    def list_available_models(self) -> List[Dict[str, Any]]:
+        return self.model_manager.list_models()
+
+    def create_training_job(
+        self,
+        style_id: str,
+        style_name: str,
+        sample_ids: List[str],
+        sample_texts: List[str],
+        model_name: Optional[str] = None
+    ) -> TrainingJob:
+        import uuid
+
+        if model_name is None:
+            models = self.model_manager.list_models()
+            if models:
+                model_name = models[0]['name']
+            else:
+                model_name = "nanochat-zh"
+
+        job_id = str(uuid.uuid4())[:8]
+        job = TrainingJob(
+            job_id=job_id,
+            style_id=style_id,
+            style_name=style_name,
+            sample_ids=sample_ids,
+            model_name=model_name,
+            status=TrainingStatus.PENDING,
+            progress=0.0,
+            created_at=datetime.now().isoformat()
+        )
+
+        self.jobs[job_id] = job
+        self._save_job(job)
+
+        return job
+
+    async def _run_training(self, job: TrainingJob, sample_texts: List[str]):
+        from datetime import datetime
+        import time
+
+        job.status = TrainingStatus.RUNNING
+        job.started_at = datetime.now().isoformat()
+        self._save_job(job)
+
+        try:
+            job.progress = 0.1
+            self._save_job(job)
+
+            print(f"[NanoChatZHTrainer] Starting training for style: {job.style_name}")
+            print(f"[NanoChatZHTrainer] Number of samples: {len(sample_texts)}")
+
+            from nanochat_integration.training.nanochat_zh_trainer import NanoChatZHTrainer, NanoChatZHTrainingConfig
+
+            config = NanoChatZHTrainingConfig()
+            if job.model_name:
+                config.base_model_name = job.model_name
+            
+            trainer = NanoChatZHTrainer(
+                adapter_path=os.path.join(self.adapters_dir, job.style_id),
+                config=config
+            )
+
+            job.progress = 0.3
+            self._save_job(job)
+
+            dataset_path = trainer.prepare_instruction_dataset(
+                sample_texts,
+                job.style_name
+            )
+
+            def progress_callback(progress):
+                job.progress = 0.3 + progress * 0.65
+                self._save_job(job)
+
+            job.progress = 0.35
+            self._save_job(job)
+
+            adapter_path = trainer.train(
+                dataset_path,
+                progress_callback=progress_callback
+            )
+
+            job.adapter_path = adapter_path
+            job.progress = 1.0
+            job.status = TrainingStatus.COMPLETED
+            job.completed_at = datetime.now().isoformat()
+            self._save_job(job)
+            print(f"[NanoChatZHTrainer] Training completed successfully! Adapter: {adapter_path}")
+
+        except Exception as e:
+            print(f"[NanoChatZHTrainer] Training failed with error: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            job.status = TrainingStatus.FAILED
+            job.error_message = str(e)
+            job.completed_at = datetime.now().isoformat()
+            self._save_job(job)
+
+    def get_job(self, job_id):
+        return self.jobs.get(job_id)
+
+    def list_jobs(self):
+        return list(self.jobs.values())
+
+    def delete_job(self, job_id):
+        if job_id not in self.jobs:
+            return False
+        
+        job = self.jobs[job_id]
+        
+        job_file = os.path.join(self.jobs_dir, f"{job_id}.json")
+        if os.path.exists(job_file):
+            os.remove(job_file)
+        
+        adapter_dir = os.path.join(self.adapters_dir, job.style_id)
+        if os.path.exists(adapter_dir):
+            import shutil
+            shutil.rmtree(adapter_dir)
+        
+        del self.jobs[job_id]
+        return True
+
+    def run_training_sync(self, job, sample_texts):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(self._run_training(job, sample_texts))
+        finally:
+            loop.close()
+

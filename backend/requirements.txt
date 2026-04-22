@@ -1,0 +1,21 @@
+# 基础版 - Apple Silicon / 通用
+# 版本号放宽，避免编译问题
+
+fastapi&gt;=0.100.0
+uvicorn[standard]&gt;=0.20.0
+pydantic&gt;=2.0.0
+pydantic-settings&gt;=2.0.0
+python-multipart&gt;=0.0.5
+openai&gt;=1.0.0
+python-dotenv&gt;=1.0.0
+aiofiles&gt;=23.0.0
+openpyxl&gt;=3.1.0
+pandas&gt;=2.0.0
+httpx&gt;=0.25.0
+torch&gt;=2.0.0
+tqdm&gt;=4.60.0
+transformers&gt;=4.40.0
+datasets&gt;=2.0.0
+peft&gt;=0.10.0
+trl&gt;=0.8.0
+accelerate&gt;=0.27.0
