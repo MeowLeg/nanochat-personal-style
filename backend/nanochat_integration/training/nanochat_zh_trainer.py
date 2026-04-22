@@ -254,9 +254,8 @@ class NanoChatZHGenerator:
     ):
         model, tokenizer = cls._load_model(style_id)
         
-        # max_length 是用户想要的字数，转换为 token 数（约 2 tokens / 中文字）
         if max_new_tokens is None:
-            max_new_tokens = max_length * 2
+            max_new_tokens = max_length
         
         prompt = f"指令：按{style_name}的写作风格改写文章，请将输出严格控制在{max_length}字以内\n输入：{source_text}\n输出："
         
